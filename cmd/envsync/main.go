@@ -1,24 +1,13 @@
-// Package main is the entry point for the envsync CLI tool.
-// It provides commands to diff and sync .env files across environments
-// with optional secret masking support.
 package main
 
 import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/yourorg/envsync/internal/envfile"
+	"github.com/user/envsync/internal/envfile"
 )
-
-const usage = `envsync - diff and sync .env files across environments
-
-Usage:
-  envsync diff <source> <target>     Show differences between two .env files
-  envsync sync <source> <target>     Sync keys from source into target
-
-Flags:
-`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -29,53 +18,38 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		fmt.Print(usage)
-		flag.PrintDefaults()
-		return nil
+		return fmt.Errorf("usage: envsync <command> [options]\ncommands: diff, sync, validate")
 	}
-
 	switch args[0] {
 	case "diff":
 		return runDiff(args[1:])
 	case "sync":
 		return runSync(args[1:])
-	case "help", "--help", "-h":
-		fmt.Print(usage)
-		return nil
+	case "validate":
+		return runValidate(args[1:])
 	default:
-		return fmt.Errorf("unknown command %q — run 'envsync help' for usage", args[0])
+		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
 func runDiff(args []string) error {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
-	maskSecrets := fs.Bool("mask", true, "mask sensitive values in output")
+	maskSecrets := fs.Bool("mask", true, "mask secret values in output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf("diff requires two arguments: <source> <target>")
+		return fmt.Errorf("diff requires two file arguments")
 	}
-
-	sourcePath := fs.Arg(0)
-	targetPath := fs.Arg(1)
-
-	source, err := envfile.Parse(sourcePath)
+	src, err := envfile.Parse(fs.Arg(0))
 	if err != nil {
-		return fmt.Errorf("parsing source %q: %w", sourcePath, err)
+		return fmt.Errorf("parsing source: %w", err)
 	}
-
-	target, err := envfile.Parse(targetPath)
+	dst, err := envfile.Parse(fs.Arg(1))
 	if err != nil {
-		return fmt.Errorf("parsing target %q: %w", targetPath, err)
+		return fmt.Errorf("parsing destination: %w", err)
 	}
-
-	result := envfile.Diff(source, target)
-	if !envfile.HasChanges(result) {
-		fmt.Println("No differences found.")
-		return nil
-	}
-
+	result := envfile.Diff(src, dst)
 	masker := envfile.NewMasker(nil)
 	fmt.Print(envfile.FormatDiff(result, *maskSecrets, masker))
 	return nil
@@ -83,42 +57,62 @@ func runDiff(args []string) error {
 
 func runSync(args []string) error {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
-	overwrite := fs.Bool("overwrite", false, "overwrite existing keys in target")
-	dryRun := fs.Bool("dry-run", false, "preview changes without writing to disk")
+	overwrite := fs.Bool("overwrite", false, "overwrite existing keys in destination")
+	dryRun := fs.Bool("dry-run", false, "print changes without writing")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf("sync requires two arguments: <source> <target>")
+		return fmt.Errorf("sync requires source and destination file arguments")
 	}
-
-	sourcePath := fs.Arg(0)
-	targetPath := fs.Arg(1)
-
-	source, err := envfile.Parse(sourcePath)
+	src, err := envfile.Parse(fs.Arg(0))
 	if err != nil {
-		return fmt.Errorf("parsing source %q: %w", sourcePath, err)
+		return fmt.Errorf("parsing source: %w", err)
 	}
-
-	target, err := envfile.Parse(targetPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("parsing target %q: %w", targetPath, err)
-	}
-
-	synced, err := envfile.Sync(source, target, targetPath, envfile.SyncOptions{
-		Overwrite: *overwrite,
-		DryRun:    *dryRun,
-	})
+	dst, err := envfile.Parse(fs.Arg(1))
 	if err != nil {
-		return fmt.Errorf("syncing files: %w", err)
+		return fmt.Errorf("parsing destination: %w", err)
 	}
-
+	opts := envfile.SyncOptions{Overwrite: *overwrite, DryRun: *dryRun}
+	updated, err := envfile.Sync(src, dst, fs.Arg(1), opts)
+	if err != nil {
+		return fmt.Errorf("syncing: %w", err)
+	}
 	if *dryRun {
-		fmt.Println("[dry-run] The following changes would be applied:")
 		masker := envfile.NewMasker(nil)
-		fmt.Print(envfile.Format(synced, true, masker))
-	} else {
-		fmt.Printf("Synced %d entries from %q into %q\n", len(synced), sourcePath, targetPath)
+		fmt.Print(envfile.Format(updated, false, masker))
 	}
+	return nil
+}
+
+func runValidate(args []string) error {
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	required := fs.String("required", "", "comma-separated list of required keys")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("validate requires a file argument")
+	}
+	entries, err := envfile.Parse(fs.Arg(0))
+	if err != nil {
+		return fmt.Errorf("parsing file: %w", err)
+	}
+	result := envfile.Validate(entries)
+	if *required != "" {
+		keys := strings.Split(*required, ",")
+		for i, k := range keys {
+			keys[i] = strings.TrimSpace(k)
+		}
+		reqResult := envfile.ValidateRequiredKeys(entries, keys)
+		result.Errors = append(result.Errors, reqResult.Errors...)
+	}
+	if !result.Valid() {
+		for _, e := range result.Errors {
+			fmt.Fprintf(os.Stderr, "validation error: %s\n", e.Error())
+		}
+		return fmt.Errorf("%d validation error(s) found", len(result.Errors))
+	}
+	fmt.Println("validation passed")
 	return nil
 }
