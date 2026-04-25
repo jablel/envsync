@@ -56,3 +56,16 @@ func TemplateKeys(entries []Entry) []string {
 	}
 	return keys
 }
+
+// MissingKeys returns the required placeholder keys from template that are
+// absent or empty in the provided values map. Useful for validating that all
+// required keys are supplied before calling ApplyTemplate.
+func MissingKeys(template []Entry, values map[string]string) []string {
+	var missing []string
+	for _, key := range TemplateKeys(template) {
+		if v, ok := values[key]; !ok || strings.TrimSpace(v) == "" {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
