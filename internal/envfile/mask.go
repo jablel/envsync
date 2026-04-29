@@ -57,3 +57,17 @@ func (m *Masker) MaskEntries(entries []Entry) []Entry {
 	}
 	return result
 }
+
+// AddPattern appends a new pattern to the Masker's pattern list if it is not
+// already present (comparison is case-insensitive). It returns true if the
+// pattern was added, or false if it was a duplicate.
+func (m *Masker) AddPattern(pattern string) bool {
+	upper := strings.ToUpper(pattern)
+	for _, p := range m.Patterns {
+		if p == upper {
+			return false
+		}
+	}
+	m.Patterns = append(m.Patterns, upper)
+	return true
+}
