@@ -88,3 +88,18 @@ func ExpandKeys(entries []Entry, opts FlattenOptions) ([]Entry, error) {
 	}
 	return result, nil
 }
+
+// FilterByPrefix returns only the entries whose keys start with the given prefix.
+// If prefix is empty, all entries are returned unchanged.
+func FilterByPrefix(entries []Entry, prefix string) []Entry {
+	if prefix == "" {
+		return entries
+	}
+	result := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Key, prefix) {
+			result = append(result, e)
+		}
+	}
+	return result
+}
