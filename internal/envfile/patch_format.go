@@ -59,3 +59,16 @@ func FormatPatchInstructions(instructions []PatchInstruction) string {
 	}
 	return sb.String()
 }
+
+// PatchResultsByStatus splits a slice of PatchResults into two slices:
+// the first containing applied results and the second containing skipped results.
+func PatchResultsByStatus(results []PatchResult) (applied, skipped []PatchResult) {
+	for _, r := range results {
+		if r.Applied {
+			applied = append(applied, r)
+		} else {
+			skipped = append(skipped, r)
+		}
+	}
+	return applied, skipped
+}
